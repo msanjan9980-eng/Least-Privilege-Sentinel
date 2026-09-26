@@ -2,3 +2,6 @@ node_modules/
 .vercel
 .env
 *.log
+agent-payload.json
+cloudflared.exe
+cloudflared.exe
