@@ -1,0 +1,11 @@
+{
+  "name": "mcp-server",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "api/index.js",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "express": "^4.19.0",
+    "zod": "^3.23.0"
+  }
+}
