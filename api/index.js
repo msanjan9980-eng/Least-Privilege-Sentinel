@@ -1,5 +1,5 @@
 // MCP server for Least-Privilege Sentinel — Vercel serverless handler.
-// No Express, no external SDK. Handles MCP JSON-RPC over POST, plus GET status.
+// Implements minimal MCP protocol: initialize, tools/list, tools/call.
 
 const mockData = {
   identities: [
@@ -185,7 +185,7 @@ async function handleToolCall(name, args) {
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept, Mcp-Session-Id");
 
   if (req.method === "OPTIONS") {
     return res.status(204).end();
@@ -207,6 +207,25 @@ export default async function handler(req, res) {
   try {
     const body = req.body;
     const { method, params, id } = body;
+
+    // MCP initialize handshake
+    if (method === "initialize") {
+      res.setHeader("Mcp-Session-Id", "session-" + Date.now());
+      return res.status(200).json({
+        jsonrpc: "2.0",
+        id,
+        result: {
+          protocolVersion: "2024-11-05",
+          capabilities: { tools: {} },
+          serverInfo: { name: "least-privilege-sentinel", version: "1.0.0" },
+        },
+      });
+    }
+
+    // MCP initialized notification (no response needed, but acknowledge)
+    if (method === "notifications/initialized") {
+      return res.status(202).end();
+    }
 
     if (method === "tools/list") {
       return res.status(200).json({
