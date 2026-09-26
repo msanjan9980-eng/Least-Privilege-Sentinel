@@ -1,5 +1,4 @@
 // MCP server for Least-Privilege Sentinel — Vercel serverless handler.
-// Implements minimal MCP protocol: initialize, tools/list, tools/call.
 
 const mockData = {
   identities: [
@@ -111,6 +110,7 @@ const TOOLS = [
     name: "list_identities",
     description: "List all IAM roles in the account.",
     inputSchema: { type: "object", properties: {}, required: [] },
+    annotations: { readOnlyHint: true },
   },
   {
     name: "get_identity_policies",
@@ -120,6 +120,7 @@ const TOOLS = [
       properties: { role_name: { type: "string", description: "IAM role name." } },
       required: ["role_name"],
     },
+    annotations: { readOnlyHint: true },
   },
   {
     name: "get_identity_usage",
@@ -129,6 +130,7 @@ const TOOLS = [
       properties: { role_name: { type: "string" }, days: { type: "number" } },
       required: ["role_name"],
     },
+    annotations: { readOnlyHint: true },
   },
   {
     name: "revoke_role",
@@ -137,6 +139,11 @@ const TOOLS = [
       type: "object",
       properties: { role_name: { type: "string" }, reason: { type: "string" } },
       required: ["role_name", "reason"],
+    },
+    annotations: {
+      destructiveHint: true,
+      readOnlyHint: false,
+      idempotentHint: false,
     },
   },
 ];
@@ -208,7 +215,6 @@ export default async function handler(req, res) {
     const body = req.body;
     const { method, params, id } = body;
 
-    // MCP initialize handshake
     if (method === "initialize") {
       res.setHeader("Mcp-Session-Id", "session-" + Date.now());
       return res.status(200).json({
@@ -222,7 +228,6 @@ export default async function handler(req, res) {
       });
     }
 
-    // MCP initialized notification (no response needed, but acknowledge)
     if (method === "notifications/initialized") {
       return res.status(202).end();
     }
