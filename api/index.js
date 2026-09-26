@@ -1,16 +1,6 @@
-// mcp-server/api/index.js
-// MCP server for Least-Privilege Sentinel — Vercel serverless version.
-// Mock IAM data is inlined to avoid filesystem dependencies in serverless.
+// MCP server for Least-Privilege Sentinel — Vercel serverless handler.
+// No Express, no external SDK. Handles MCP JSON-RPC over POST, plus GET status.
 
-import express from "express";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
-
-// ---------- Mock IAM data (inlined) ----------
 const mockData = {
   identities: [
     {
@@ -116,181 +106,136 @@ const mockData = {
   ],
 };
 
-// ---------- Tool implementations ----------
+const TOOLS = [
+  {
+    name: "list_identities",
+    description: "List all IAM roles in the account.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  },
+  {
+    name: "get_identity_policies",
+    description: "Fetch all policies attached to an IAM role.",
+    inputSchema: {
+      type: "object",
+      properties: { role_name: { type: "string", description: "IAM role name." } },
+      required: ["role_name"],
+    },
+  },
+  {
+    name: "get_identity_usage",
+    description: "Query usage evidence for an IAM role.",
+    inputSchema: {
+      type: "object",
+      properties: { role_name: { type: "string" }, days: { type: "number" } },
+      required: ["role_name"],
+    },
+  },
+  {
+    name: "revoke_role",
+    description: "Delete an IAM role. This is irreversible and requires human approval.",
+    inputSchema: {
+      type: "object",
+      properties: { role_name: { type: "string" }, reason: { type: "string" } },
+      required: ["role_name", "reason"],
+    },
+  },
+];
 
-async function listIdentities() {
-  return mockData.identities.map((i) => ({
-    name: i.name,
-    arn: i.arn,
-    created: i.created,
-  }));
-}
-
-async function getIdentityPolicies({ role_name }) {
-  const identity = mockData.identities.find((i) => i.name === role_name);
-  if (!identity) throw new Error(`Role not found: ${role_name}`);
-  return {
-    role_name,
-    managed: identity.managed_policies,
-    inline: identity.inline_policies,
-    boundary: identity.boundary,
-  };
-}
-
-async function getIdentityUsage({ role_name, days = 90 }) {
-  const identity = mockData.identities.find((i) => i.name === role_name);
-  if (!identity) throw new Error(`Role not found: ${role_name}`);
-
-  let daysSinceLastActivity = null;
-  if (identity.last_activity) {
-    const last = new Date(identity.last_activity);
-    const now = new Date();
-    daysSinceLastActivity = Math.floor((now - last) / (1000 * 60 * 60 * 24));
-  }
-
-  return {
-    role_name,
-    observation_window_days: days,
-    last_activity: identity.last_activity,
-    days_since_last_activity: daysSinceLastActivity,
-    call_count: identity.call_count_last_90d,
-    actions_used: identity.actions_used,
-  };
-}
-
-async function revokeRole({ role_name, reason }) {
-  return {
-    status: "revoked",
-    role_name,
-    reason,
-    executed_at: new Date().toISOString(),
-    mode: "mock",
-  };
-}
-
-// ---------- MCP server factory ----------
-
-function createMcpServer() {
-  const server = new Server(
-    { name: "least-privilege-sentinel", version: "1.0.0" },
-    { capabilities: { tools: {} } }
-  );
-
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [
-      {
-        name: "list_identities",
-        description: "List all IAM roles in the account.",
-        inputSchema: { type: "object", properties: {}, required: [] },
-      },
-      {
-        name: "get_identity_policies",
-        description: "Fetch all policies attached to an IAM role.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            role_name: { type: "string", description: "IAM role name." },
-          },
-          required: ["role_name"],
-        },
-      },
-      {
-        name: "get_identity_usage",
-        description: "Query usage evidence for an IAM role.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            role_name: { type: "string" },
-            days: { type: "number" },
-          },
-          required: ["role_name"],
-        },
-      },
-      {
-        name: "revoke_role",
-        description:
-          "Delete an IAM role. This is irreversible and requires human approval via the agent's approval gate.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            role_name: { type: "string" },
-            reason: { type: "string" },
-          },
-          required: ["role_name", "reason"],
-        },
-      },
-    ],
-  }));
-
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name, arguments: args } = request.params;
-    try {
-      let result;
-      switch (name) {
-        case "list_identities":
-          result = await listIdentities();
-          break;
-        case "get_identity_policies":
-          result = await getIdentityPolicies(args);
-          break;
-        case "get_identity_usage":
-          result = await getIdentityUsage(args);
-          break;
-        case "revoke_role":
-          result = await revokeRole(args);
-          break;
-        default:
-          throw new Error(`Unknown tool: ${name}`);
-      }
+async function handleToolCall(name, args) {
+  switch (name) {
+    case "list_identities":
+      return mockData.identities.map((i) => ({ name: i.name, arn: i.arn, created: i.created }));
+    case "get_identity_policies": {
+      const identity = mockData.identities.find((i) => i.name === args.role_name);
+      if (!identity) throw new Error(`Role not found: ${args.role_name}`);
       return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-      };
-    } catch (error) {
-      return {
-        content: [
-          { type: "text", text: JSON.stringify({ error: error.message }) },
-        ],
-        isError: true,
+        role_name: args.role_name,
+        managed: identity.managed_policies,
+        inline: identity.inline_policies,
+        boundary: identity.boundary,
       };
     }
-  });
-
-  return server;
+    case "get_identity_usage": {
+      const identity = mockData.identities.find((i) => i.name === args.role_name);
+      if (!identity) throw new Error(`Role not found: ${args.role_name}`);
+      const last = new Date(identity.last_activity);
+      const daysSince = Math.floor((new Date() - last) / (1000 * 60 * 60 * 24));
+      return {
+        role_name: args.role_name,
+        observation_window_days: args.days || 90,
+        last_activity: identity.last_activity,
+        days_since_last_activity: daysSince,
+        call_count: identity.call_count_last_90d,
+        actions_used: identity.actions_used,
+      };
+    }
+    case "revoke_role":
+      return {
+        status: "revoked",
+        role_name: args.role_name,
+        reason: args.reason,
+        executed_at: new Date().toISOString(),
+        mode: "mock",
+      };
+    default:
+      throw new Error(`Unknown tool: ${name}`);
+  }
 }
 
-// ---------- HTTP transport ----------
+export default async function handler(req, res) {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept");
 
-const app = express();
-app.use(express.json());
+  if (req.method === "OPTIONS") {
+    return res.status(204).end();
+  }
 
-app.post("/mcp", async (req, res) => {
-  try {
-    const server = createMcpServer();
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
+  if (req.method === "GET") {
+    return res.status(200).json({
+      name: "Least-Privilege Sentinel MCP Server",
+      version: "1.0.0",
+      status: "running",
+      tools: TOOLS.map((t) => t.name),
     });
-    res.on("close", () => transport.close());
-    await server.connect(transport);
-    await transport.handleRequest(req, res, req.body);
-  } catch (err) {
-    console.error("MCP request error:", err);
-    if (!res.headersSent) {
-      res.status(500).json({
+  }
+
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+
+  try {
+    const body = req.body;
+    const { method, params, id } = body;
+
+    if (method === "tools/list") {
+      return res.status(200).json({
         jsonrpc: "2.0",
-        error: { code: -32603, message: "Internal server error" },
-        id: null,
+        id,
+        result: { tools: TOOLS },
       });
     }
+
+    if (method === "tools/call") {
+      const { name, arguments: args } = params;
+      const result = await handleToolCall(name, args);
+      return res.status(200).json({
+        jsonrpc: "2.0",
+        id,
+        result: { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] },
+      });
+    }
+
+    return res.status(200).json({
+      jsonrpc: "2.0",
+      id,
+      error: { code: -32601, message: `Method not found: ${method}` },
+    });
+  } catch (error) {
+    return res.status(200).json({
+      jsonrpc: "2.0",
+      id: req.body?.id || null,
+      error: { code: -32603, message: error.message },
+    });
   }
-});
-
-app.get("/mcp", (_req, res) => {
-  res.status(405).json({
-    jsonrpc: "2.0",
-    error: { code: -32000, message: "Method not allowed." },
-    id: null,
-  });
-});
-
-// Export for Vercel
-export default app;
+}
