@@ -108,36 +108,42 @@ const mockData = {
 const TOOLS = [
   {
     name: "list_identities",
-    description: "List all IAM roles in the account.",
+    description: "List all IAM roles in the account. Returns each role's name, ARN, and creation date.",
     inputSchema: { type: "object", properties: {}, required: [] },
     annotations: { readOnlyHint: true },
   },
   {
     name: "get_identity_policies",
-    description: "Fetch all policies attached to an IAM role.",
+    description: "Fetch all policies attached to an IAM role. Accepts either the role name (e.g. admin-backup-role) or the full ARN.",
     inputSchema: {
       type: "object",
-      properties: { role_name: { type: "string", description: "IAM role name." } },
+      properties: { role_name: { type: "string", description: "IAM role name or ARN." } },
       required: ["role_name"],
     },
     annotations: { readOnlyHint: true },
   },
   {
     name: "get_identity_usage",
-    description: "Query usage evidence for an IAM role.",
+    description: "Query usage evidence for an IAM role. Accepts either the role name (e.g. admin-backup-role) or the full ARN.",
     inputSchema: {
       type: "object",
-      properties: { role_name: { type: "string" }, days: { type: "number" } },
+      properties: {
+        role_name: { type: "string", description: "IAM role name or ARN." },
+        days: { type: "number" },
+      },
       required: ["role_name"],
     },
     annotations: { readOnlyHint: true },
   },
   {
     name: "revoke_role",
-    description: "Delete an IAM role. This is irreversible and requires human approval.",
+    description: "Delete an IAM role. This is irreversible and requires human approval. Accepts either the role name (e.g. admin-backup-role) or the full ARN.",
     inputSchema: {
       type: "object",
-      properties: { role_name: { type: "string" }, reason: { type: "string" } },
+      properties: {
+        role_name: { type: "string", description: "IAM role name or ARN." },
+        reason: { type: "string" },
+      },
       required: ["role_name", "reason"],
     },
     annotations: {
@@ -148,27 +154,41 @@ const TOOLS = [
   },
 ];
 
+function findIdentity(key) {
+  return mockData.identities.find(
+    (i) => i.name === key || i.arn === key || i.arn.endsWith("/" + key)
+  );
+}
+
 async function handleToolCall(name, args) {
   switch (name) {
     case "list_identities":
-      return mockData.identities.map((i) => ({ name: i.name, arn: i.arn, created: i.created }));
+      return mockData.identities.map((i) => ({
+        name: i.name,
+        arn: i.arn,
+        created: i.created,
+      }));
+
     case "get_identity_policies": {
-      const identity = mockData.identities.find((i) => i.name === args.role_name);
+      const identity = findIdentity(args.role_name);
       if (!identity) throw new Error(`Role not found: ${args.role_name}`);
       return {
-        role_name: args.role_name,
+        role_name: identity.name,
+        arn: identity.arn,
         managed: identity.managed_policies,
         inline: identity.inline_policies,
         boundary: identity.boundary,
       };
     }
+
     case "get_identity_usage": {
-      const identity = mockData.identities.find((i) => i.name === args.role_name);
+      const identity = findIdentity(args.role_name);
       if (!identity) throw new Error(`Role not found: ${args.role_name}`);
       const last = new Date(identity.last_activity);
       const daysSince = Math.floor((new Date() - last) / (1000 * 60 * 60 * 24));
       return {
-        role_name: args.role_name,
+        role_name: identity.name,
+        arn: identity.arn,
         observation_window_days: args.days || 90,
         last_activity: identity.last_activity,
         days_since_last_activity: daysSince,
@@ -176,14 +196,20 @@ async function handleToolCall(name, args) {
         actions_used: identity.actions_used,
       };
     }
-    case "revoke_role":
+
+    case "revoke_role": {
+      const identity = findIdentity(args.role_name);
+      if (!identity) throw new Error(`Role not found: ${args.role_name}`);
       return {
         status: "revoked",
-        role_name: args.role_name,
+        role_name: identity.name,
+        arn: identity.arn,
         reason: args.reason,
         executed_at: new Date().toISOString(),
         mode: "mock",
       };
+    }
+
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
